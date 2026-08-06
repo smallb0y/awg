@@ -22,12 +22,12 @@ on:
         description: "OpenWrt target"
         type: string
         required: true
-        default: "mediatek"
+        default: "qualcommax"
       openwrt_subtarget:
         description: "OpenWrt subtarget"
         type: string
         required: true
-        default: "filogic"
+        default: "ipq807x"
       compile_kmod:
         description: "Compile kernel module inplementation"
         type: boolean
