@@ -7,5 +7,5 @@
 	{ "target": "ipq806x",  "subtarget": "generic" },
 	{ "target": "bcm53xx",  "subtarget": "generic" },
 	{ "target": "ramips",   "subtarget": "mt7621" },
-	{ "target": "ath79",    "subtarget": "generic" }
+	{ "target": "qualcommax",    "subtarget": "ipq807x" }
 ]
