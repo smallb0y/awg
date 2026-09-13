@@ -89,7 +89,35 @@ jobs:
       run: |
         set -e -x
         mkdir awgrelease
-        echo "vermagic=$(cat openwrt/build_dir/target-${{ inputs.openwrt_arch }}*/linux-${{ inputs.openwrt_target }}_${{ inputs.openwrt_subtarget }}/linux-*/.vermagic)" > awgrelease/vermagic
+
+        # The kernel module can only be installed on a firmware whose kernel
+        # reports the very same vermagic. Let's calculate it.
+        vermagic=""
+        vermagic_file="$(find openwrt/build_dir -maxdepth 5 -type f -name '.vermagic' -print -quit)"
+        if [ -n "$vermagic_file" ]; then
+          vermagic="$(cat "$vermagic_file")"
+        fi
+        if [ -z "$vermagic" ]; then
+          vermagic="$(sed -n 's/.*LINUX_VERMAGIC),\([^,)]*\))[[:space:]]*$/\1/p' openwrt/include/kernel.mk | head -n1)"
+        fi
+        [ -n "$vermagic" ] || vermagic="unknown"
+
+        # AmneziaWG version calculation
+        awg_version=""
+        awg_makefile="$(find openwrt/feeds openwrt/package -maxdepth 4 -type f -path '*kmod-amneziawg/Makefile' -print -quit 2>/dev/null)"
+        if [ -n "$awg_makefile" ]; then
+          awg_version="$(sed -n 's/^PKG_VERSION:=//p' "$awg_makefile" | head -n1)"
+        fi
+        [ -n "$awg_version" ] || awg_version="unknown"
+
+        {
+          echo "YAAWG version: $awg_version"
+          echo "OpenWrt version: ${{ inputs.openwrt_version }}"
+          echo "Target: ${{ inputs.openwrt_target }}/${{ inputs.openwrt_subtarget }}"
+          echo "Architecture: ${{ inputs.openwrt_arch }}"
+          echo "Built at: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "Vermagic: $vermagic"
+        } > awgrelease/build-info.txt
         if [ "${{ env.compile_kmod }}" = "true" ]; then
           find "openwrt/bin/targets/${{ inputs.openwrt_target }}/${{ inputs.openwrt_subtarget }}/packages" -maxdepth 1 -type f -name 'kmod-amneziawg*' -exec cp {} awgrelease \;
         fi

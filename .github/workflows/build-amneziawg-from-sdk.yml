@@ -99,9 +99,18 @@ jobs:
         echo "CONFIG_PACKAGE_amneziawg-go=y" >> openwrt/.config
         echo "CONFIG_PACKAGE_amneziawg-tools=y" >> openwrt/.config
         echo "CONFIG_PACKAGE_luci-proto-amneziawg=y" >> openwrt/.config
+        # amneziawg-go requires Go >= 1.25. Only override the SDK's Go feed when
+        # it is actually too old.
         if [ "${{ env.compile_go }}" = "true" ]; then
-          rm -r openwrt/feeds/packages/lang/golang
-          cp -r packages/lang/golang openwrt/feeds/packages/lang
+          sdk_go=$(sed -n 's/^GO_DEFAULT_VERSION:=//p' openwrt/feeds/packages/lang/golang/golang-values.mk)
+          need_go=1.25
+          if [ -n "$sdk_go" ] && [ "$(printf '%s\n%s\n' "$need_go" "$sdk_go" | sort -V | head -n1)" != "$need_go" ]; then
+            echo "SDK ships Go $sdk_go (< $need_go); overriding golang feed from openwrt/packages."
+            rm -r openwrt/feeds/packages/lang/golang
+            cp -r packages/lang/golang openwrt/feeds/packages/lang
+          else
+            echo "SDK ships Go ${sdk_go:-unknown} (>= $need_go); keeping the SDK golang feed."
+          fi
         fi
         ./openwrt/scripts/feeds install -a
         make -C openwrt defconfig
@@ -128,6 +137,27 @@ jobs:
         mkdir awgrelease
         find "openwrt/bin/targets/${{ inputs.openwrt_target }}/${{ inputs.openwrt_subtarget }}/packages" -maxdepth 1 -type f -name 'kmod-amneziawg*' -exec cp {} awgrelease \;
         find "openwrt/bin/packages/${{ inputs.openwrt_arch }}/awgopenwrt" -maxdepth 1 -type f \( -name '*.ipk' -o -name '*.apk' \) -exec cp {} awgrelease \;
+
+        # The kernel module can only be installed on a firmware whose kernel
+        # reports the very same vermagic. Let's calculate it
+        vermagic=""
+        vermagic_file="$(find openwrt/build_dir -maxdepth 5 -type f -name '.vermagic' -print -quit)"
+        if [ -n "$vermagic_file" ]; then
+          vermagic="$(cat "$vermagic_file")"
+        fi
+        if [ -z "$vermagic" ]; then
+          vermagic="$(sed -n 's/.*LINUX_VERMAGIC),\([^,)]*\))[[:space:]]*$/\1/p' openwrt/include/kernel.mk | head -n1)"
+        fi
+        [ -n "$vermagic" ] || vermagic="unknown"
+
+        {
+          echo "YAAWG version: ${{ inputs.amneziawg_version }}"
+          echo "OpenWrt version: ${{ inputs.openwrt_version }}"
+          echo "Target: ${{ inputs.openwrt_target }}/${{ inputs.openwrt_subtarget }}"
+          echo "Architecture: ${{ inputs.openwrt_arch }}"
+          echo "Built at: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "Vermagic: $vermagic"
+        } > awgrelease/build-info.txt
 
     - name: Upload artifacts
       uses: actions/upload-artifact@v7

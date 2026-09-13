@@ -95,8 +95,17 @@ jobs:
         if: ${{ inputs.update_go }}
         run: |
           set -e -x
-          rm -r openwrt/feeds/packages/lang/golang
-          cp -r packages/lang/golang openwrt/feeds/packages/lang
+          # amneziawg-go requires Go >= 1.25. Only override the source tree's Go
+          # feed when it is actually too old.
+          sdk_go=$(sed -n 's/^GO_DEFAULT_VERSION:=//p' openwrt/feeds/packages/lang/golang/golang-values.mk)
+          need_go=1.25
+          if [ -n "$sdk_go" ] && [ "$(printf '%s\n%s\n' "$need_go" "$sdk_go" | sort -V | head -n1)" != "$need_go" ]; then
+            echo "Tree ships Go $sdk_go (< $need_go); overriding golang feed from openwrt/packages."
+            rm -r openwrt/feeds/packages/lang/golang
+            cp -r packages/lang/golang openwrt/feeds/packages/lang
+          else
+            echo "Tree ships Go ${sdk_go:-unknown} (>= $need_go); keeping the tree's golang feed."
+          fi
 
       - name: Build toolchain and kernel
         run: |

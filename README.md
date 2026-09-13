@@ -6,7 +6,7 @@
 A: Prebuilt packages for the most popular architectures are published on the [releases page](../../releases): a versioned release for the latest stable OpenWRT version and a daily refreshed `snapshot` pre-release for `SNAPSHOT`. If your architecture is not covered, [build it yourself](#how-to-use-the-new-workflow).
 
 **Q: What is the latest supported version of the protocol?**  
-A: YAAWG fully supports AmneziaWG v3.0, including header protection, content padding and the customizable timings, on top of everything v2.0 offers (S3-S4, I1-I5 and ranged H1-H4 parameters). See the [protocol parameters](#protocol-parameters) section.
+A: YAAWG fully supports AmneziaWG v3.1, adding random packet trailers and the option to disable cookie replies on top of the v3.0 header protection, content padding and customizable timings, and everything v2.0 offers (S3-S4, I1-I5 and ranged H1-H4 parameters). See the [protocol parameters](#protocol-parameters) section.
 
 **Q: Should I use the kernel module or the Go implementation?**  
 A: Use the kernel module by default. If it doesn't work for you, switch to the Go implementation. More info [here](#kmod-amneziawg-vs-amneziawg-go).
@@ -40,7 +40,9 @@ The main differences and objectives are:
    - Added support for ranged H1-H4 parameters (delimiter: `-`, e.g., `123456-123500`), including a check that the four ranges do not overlap each other.
    - Added support for v2.0 protocol parameters: S3-S4, I1-I5.
    - Added support for v3.0 protocol parameters, ranged `Persistent Keep Alive` and a generator for the header protection key.
+   - Added support for v3.1 protocol parameters: the `Random Trailers` and `Disable Cookies` interface checkboxes.
    - The AmneziaWG parameters are now described by a single table, so the settings tab, the configuration import and the configuration export can never drift apart.
+   - The exported peer QR code is now bounded so that even a long v3.1 configuration always scales down to fit the page instead of getting cut off.
 
 2. `amneziawg-tools` has been aligned with the upstream repository [amneziawg-tools](https://github.com/amnezia-vpn/amneziawg-tools/):
    - The package is now compiled based on the upstream repository.
@@ -51,13 +53,16 @@ The main differences and objectives are:
    - Added support for ranged H1-H4 parameters (with `-` delimiter, e.g., `123456-123500`).
    - Added support for v2.0 protocol parameters: S3-S4, I1-I5.
    - Added support for v3.0 protocol parameters and ranged `PersistentKeepalive`.
+   - Added support for v3.1 protocol parameters: `RandomTrailers` and `DisableCookies` on the interface.
 
 3. `kmod-amneziawg` is now compiled entirely based on the upstream [amneziawg-linux-kernel-module](https://github.com/amnezia-vpn/amneziawg-linux-kernel-module) repository.
    - Added support for v2.0 protocol parameters: S3-S4, I1-I5.
    - Added support for v3.0 protocol parameters.
+   - Added support for v3.1 protocol parameters.
 
 4. `amneziawg-go` acts as an alternative to `kmod-amneziawg`. Please refer to [this section](#kmod-amneziawg-vs-amneziawg-go) for more information. The Go implementation is fully based on the upstream project [amneziawg-go](https://github.com/amnezia-vpn/amneziawg-go).
    - Added support for v3.0 protocol parameters.
+   - Added support for v3.1 protocol parameters.
 
 5. Packaging and build process:
    - Prebuilt packages for the most popular architectures are published automatically, see [below](#download-prebuilt-amneziawg-packages).
@@ -123,19 +128,35 @@ How to use them:
 3. **Timings** change how often a client rekeys, retries and sends keep alives. Because they only alter local behaviour, they are the safest parameters to experiment with: use ranges to avoid a regular, easily recognizable traffic pattern. Note that a `RejectAfterTime` shorter than `RekeyAfterTime` makes the tunnel stall.
 4. **Ranged `Persistent Keep Alive`** serves the same purpose for the keep alive interval of a single peer.
 
+### Parameters of AmneziaWG v3.1
+
+v3.1 adds three **boolean** parameters. In a text configuration file a boolean is written as `on`/`off` (the canonical form emitted by `awg showconf`) or as `1`/`0`; the words `true`/`false` are **not** accepted. In LuCI they are simple checkboxes, and YAAWG writes the enabled state as `on` and omits the parameter entirely when it is left off.
+
+| UCI option | Configuration file key | Side | Description |
+| --- | --- | --- | --- |
+| `awg_random_trailers` | `RandomTrailers` | server | Appends a random-length trailer of extra bytes to packets so their on-wire size varies and cannot be fingerprinted. Must be enabled on both ends of the tunnel. |
+| `awg_disable_cookies` | `DisableCookies` | server | Stops sending the WireGuard cookie reply messages, removing a distinctive packet type used under load. Meant to be enabled on both ends. |
+
+How to use them:
+
+1. **Random trailers** hide the exact packet length. Because a receiver only accepts oversized packets when it, too, has the option enabled, it changes the wire format and must be set on both ends.
+2. **Disable cookies** removes the cookie reply, one of the last fixed WireGuard message types. Enable it on both ends so that neither side expects the cookie handshake.
+
+> The v3.1 protocol also defines a per-peer `AdvancedSecurity` flag. It is not exposed by YAAWG yet, because the current kernel module and Go implementation do not act on it; it will be added once they gain real support for it.
+
 ### Backward compatibility
 
-AmneziaWG v3.0 is a superset of the previous versions, and both `kmod-amneziawg` and `amneziawg-go` keep supporting everything that came before:
+AmneziaWG v3.1 is a superset of the previous versions, and both `kmod-amneziawg` and `amneziawg-go` keep supporting everything that came before:
 
-1. With all parameters left empty, an AmneziaWG v3.0 interface is indistinguishable from plain WireGuard and interoperates with WireGuard peers.
+1. With all parameters left empty, an AmneziaWG v3.1 interface is indistinguishable from plain WireGuard and interoperates with WireGuard peers.
 2. With only the v1.5 and v2.0 parameters filled in, it behaves exactly like an AmneziaWG v1.5 or v2.0 interface and interoperates with peers running those versions. Existing configurations therefore keep working after the upgrade and require no changes.
-3. The client-side v3.0 parameters (the timings and the ranged `Persistent Keep Alive`) may be used against a v2.0 peer, since they never change the wire format.
-4. The server-side v3.0 parameters (`HeaderProtectionKey`, `ContentPaddingAddition`) do change the wire format, so both ends must run AmneziaWG v3.0. A v2.0 peer will silently drop the packets it cannot parse.
-5. Always upgrade `amneziawg-tools` together with `kmod-amneziawg` or `amneziawg-go`. The v3.0 tools only pass a parameter down to the implementation when it is actually configured, so an older kernel module keeps working as long as the v3.0 parameters are empty, but starts to fail with `Unable to modify interface` once they are set.
+3. The client-side timing parameters (the v3.0 timings and the ranged `Persistent Keep Alive`) may be used against an older peer, since they never change the wire format.
+4. The server-side parameters that change the wire format (`HeaderProtectionKey`, `ContentPaddingAddition` from v3.0 and `RandomTrailers`, `DisableCookies` from v3.1) must be set identically on both ends. A peer that does not enable them will silently drop the packets it cannot parse.
+5. Always upgrade `amneziawg-tools` together with `kmod-amneziawg` or `amneziawg-go`. The tools only pass a parameter down to the implementation when it is actually configured, so an older kernel module keeps working as long as the newer parameters are empty, but starts to fail with `Unable to modify interface` once they are set.
 
 ## `kmod-amneziawg` vs `amneziawg-go`
 
-When the AmneziaWG authors introduced the v1.5 protocol, it was supported only in the Go implementation. Thus the user namespace (Go) implementation was added to the repo in order to support the newer protocol version. Later, v2.0 and v3.0 protocol support was added to both the user namespace (Go) and kernel module implementations. To maintain backward compatibility, this repository will continue to support both packages.
+When the AmneziaWG authors introduced the v1.5 protocol, it was supported only in the Go implementation. Thus the user namespace (Go) implementation was added to the repo in order to support the newer protocol version. Later, v2.0, v3.0 and v3.1 protocol support was added to both the user namespace (Go) and kernel module implementations. To maintain backward compatibility, this repository will continue to support both packages.
 
 Differences:
 1. `kmod-amneziawg`: requires a less powerful device to run, consumes less space and provides a faster throughput. Recommended option.
@@ -189,7 +210,7 @@ The most popular architectures are built automatically and published on the [rel
 
 Two workflows keep those artifacts up to date, and both of them can also be started by hand from a fork:
 
-1. `Release - Build AmneziaWG for the latest OpenWrt release` runs whenever a `vX.Y.Z` tag is pushed. It resolves the newest stable OpenWRT version on its own and collects the packages into a **draft** release, so that the changelog can be written before it goes public. Started by hand against an already published release, it only adds the new archives to it, which is how an unchanged YAAWG version is rebuilt for a freshly released OpenWRT version.
+1. `Release - Build AmneziaWG for the latest OpenWrt release` runs whenever a `vX.Y.Z` tag is pushed. It resolves the newest stable OpenWRT version on its own and collects the packages into a draft release, so that the changelog can be written before it goes public. Started by hand against an already published release, it only adds the new archives to it, which is how an unchanged YAAWG version is rebuilt for a freshly released OpenWRT version. The same workflow also runs once a day on a schedule: it looks up the newest stable OpenWRT version and the latest published YAAWG release, and if that release does not yet contain archives for that OpenWRT version it builds them and attaches them automatically. When everything is already up to date the scheduled run does nothing, so new OpenWRT releases are covered without any manual tracking.
 2. `Snapshot - Build AmneziaWG for OpenWrt SNAPSHOT` runs daily and republishes the rolling `snapshot` pre-release.
 
 Every archive is named `amneziawg-{target}-{subtarget}-{architecture}-openwrt-{OpenWRT version}.tar.gz`, so builds of the same YAAWG version for several OpenWRT versions can live side by side in one release.
@@ -208,7 +229,8 @@ Key differences between the workflows:
 2. The new workflow uses the SDK instead of building the toolchain from scratch.
 3. The new workflow consists of a single step instead of two.
 4. The new workflow also compiles the localization package.
-5. The new workflow does not calculate `vermagic` value (see below).
+
+Both workflows record the `vermagic` value on the `Vermagic:` line of `build-info.txt` within the artifacts (see below).
 
 #### How to Use the New Workflow
 
@@ -287,6 +309,6 @@ Steps:
 > **Note:** You may need to clear your browser cache to see the new protocol available in OpenWRT.
 
 #### Vermagic control for `SNAPSHOT` versions
-> **Note:** Vermagic is calculated only for the **old workflow**
+> **Note:** Every workflow records the `vermagic` on the `Vermagic:` line of `build-info.txt` within the artifacts — the prebuilt `release` and `snapshot` archives as well as both compile-it-yourself workflows (`New - Build AmneziaWG from SDK` and the legacy one).
 
-Vermagic is a hash calculated for the OpenWRT kernel. When installing kernel-related packages, OpenWRT checks if the package's `vermagic` matches the kernel's. If not, installation won't succeed. Since `SNAPSHOT` versions update daily, `vermagic` values may differ. Check your firmware's `vermagic` by running `apk info kernel` or `opkg info kernel` and noting the hash after the kernel version in `Version`. For example, `6.6.52~f58afd3748410d3b1baa06a466d6682-r1` means `vermagic` is `f58afd3748410d3b1baa06a466d6682`. The compiled package's `vermagic` value is located in the `vermagic` file within the workflow artifacts. If these do not match, the kernel module cannot be installed.
+Vermagic is a hash calculated for the OpenWRT kernel. When installing kernel-related packages, OpenWRT checks if the package's `vermagic` matches the kernel's. If not, installation won't succeed. Since `SNAPSHOT` versions update daily, `vermagic` values may differ. Check your firmware's `vermagic` by running `apk info kernel` or `opkg info kernel` and noting the hash after the kernel version in `Version`. For example, `6.6.52~f58afd3748410d3b1baa06a466d6682-r1` means `vermagic` is `f58afd3748410d3b1baa06a466d6682`. Every workflow records the compiled package's `vermagic` value on the `Vermagic:` line of `build-info.txt` within the artifacts. If these do not match, the kernel module cannot be installed.

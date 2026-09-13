@@ -14,6 +14,11 @@ on:
   push:
     tags:
       - "v*"
+  schedule:
+    # Once a day check whether a newer stable OpenWrt release appeared and, if
+    # so, build the latest published YAAWG release for it and attach the
+    # archives to that release. Nothing happens when everything is up to date.
+    - cron: "0 5 * * *"
   workflow_dispatch:
     inputs:
       amneziawg_version:
@@ -54,12 +59,16 @@ jobs:
       amneziawg_version: ${{ steps.params.outputs.amneziawg_version }}
       publish: ${{ steps.params.outputs.publish }}
       draft: ${{ steps.params.outputs.draft }}
+      skip: ${{ steps.params.outputs.skip }}
     steps:
       - name: Checkout YAAWG repository
         uses: actions/checkout@v5
 
       - name: Resolve parameters
         id: params
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           set -e -o pipefail
 
@@ -79,19 +88,54 @@ jobs:
           fi
           echo "openwrt_version=$requested" >> "$GITHUB_OUTPUT"
 
+          # `skip' short-circuits the build and publish jobs when there is
+          # nothing to do (used by the daily scheduled run).
+          skip=false
+
           if [ "${{ github.event_name }}" = "push" ]; then
             echo "amneziawg_version=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
             echo "publish=true" >> "$GITHUB_OUTPUT"
             echo "draft=true" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event_name }}" = "schedule" ]; then
+            # Find the latest published (non-draft, non-prerelease) YAAWG
+            # release. The `snapshot' pre-release is skipped on purpose. The
+            # first page of the releases API (newest first) is more than enough.
+            tag=$(gh api "repos/${GH_REPO}/releases" \
+              --jq '[.[] | select(.draft == false and .prerelease == false)][0].tag_name')
+
+            if [ -z "$tag" ] || [ "$tag" = "null" ]; then
+              echo "No published stable release to update; nothing to do."
+              skip=true
+              echo "amneziawg_version=master" >> "$GITHUB_OUTPUT"
+              echo "publish=false" >> "$GITHUB_OUTPUT"
+              echo "draft=false" >> "$GITHUB_OUTPUT"
+            else
+              # The archives carry the OpenWrt version in their name, so their
+              # presence tells whether this release was already built for it.
+              if gh release view "$tag" --json assets \
+                --jq '.assets[].name' \
+                | grep -q -- "-openwrt-${requested}\.tar\.gz$"; then
+                echo "Release $tag already has packages for OpenWrt $requested; nothing to do."
+                skip=true
+              else
+                echo "Building release $tag for the new OpenWrt $requested."
+              fi
+              echo "amneziawg_version=$tag" >> "$GITHUB_OUTPUT"
+              echo "publish=true" >> "$GITHUB_OUTPUT"
+              echo "draft=false" >> "$GITHUB_OUTPUT"
+            fi
           else
             echo "amneziawg_version=${{ inputs.amneziawg_version }}" >> "$GITHUB_OUTPUT"
             echo "publish=${{ inputs.publish }}" >> "$GITHUB_OUTPUT"
             echo "draft=${{ inputs.draft }}" >> "$GITHUB_OUTPUT"
           fi
 
+          echo "skip=$skip" >> "$GITHUB_OUTPUT"
+
   build:
     name: Build
     needs: prepare
+    if: ${{ needs.prepare.outputs.skip != 'true' }}
     strategy:
       fail-fast: false
       matrix:
@@ -107,7 +151,7 @@ jobs:
   publish:
     name: Publish release
     needs: [ prepare, build ]
-    if: ${{ needs.prepare.outputs.publish == 'true' }}
+    if: ${{ needs.prepare.outputs.publish == 'true' && needs.prepare.outputs.skip != 'true' }}
     runs-on: ubuntu-24.04
     steps:
       - name: Download artifacts
